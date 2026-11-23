@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for dashboard update approvals
+
+[Path]
+PathExistsGlob=/root/agy-acp-gateway/data/upgrade/approvals/*.json
+Unit=agy-upgrader-apply.service
+
+[Install]
+WantedBy=paths.target
