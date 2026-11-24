@@ -358,31 +358,6 @@ type AccountManager struct {
 	groups           []AccountGroup
 	accounts         []AccountProfile
 	workers          map[string]*accountWorkerProc
-	crashStates      map[string]workerCrashState
-	opMu             sync.Mutex
-	opLocks          map[string]*sync.Mutex
-	oauthMu          sync.Mutex
-	oauthActive      map[string]*pendingOAuthSession
-	stickyMu         sync.Mutex
-	stickyLRU        *stickySessionLRU
-	stickyLastPrune  time.Time
-	rrCounters       map[string]uint64
-	swrrStates       map[string]map[string]*swrrEntry
-	healthMu         sync.RWMutex
-	healthStates     map[string]*accountHealthRuntime
-	inflightMap      sync.Map
-	tokCacheMu       sync.RWMutex
-	tokCache         map[string]tokenCacheEntry
-	warmupMu         sync.Mutex
-	warmupAttempt    map[string]time.Time
-	childLoopbackKey string
-	mu               sync.RWMutex
-	filePath         string
-	baseDataDir      string
-	routing          AccountPoolConfig
-	groups           []AccountGroup
-	accounts         []AccountProfile
-	workers          map[string]*accountWorkerProc
 	idleHibernated   map[string]hibernatedWorkerSnapshot
 	crashStates      map[string]workerCrashState
 	opMu             sync.Mutex
@@ -401,6 +376,7 @@ type AccountManager struct {
 	tokCache         map[string]tokenCacheEntry
 	warmupMu         sync.Mutex
 	warmupAttempt    map[string]time.Time
+	childLoopbackKey string
 }
 
 var GlobalAccountManager = NewAccountManager()
@@ -413,18 +389,6 @@ func NewAccountManager() *AccountManager {
 	return &AccountManager{
 		routing:          (AccountPoolConfig{}).Normalized(),
 		workers:          make(map[string]*accountWorkerProc),
-		crashStates:      make(map[string]workerCrashState),
-		opLocks:          make(map[string]*sync.Mutex),
-		oauthActive:      make(map[string]*pendingOAuthSession),
-		stickyLRU:        newStickySessionLRU(),
-		rrCounters:       make(map[string]uint64),
-		swrrStates:       make(map[string]map[string]*swrrEntry),
-		healthStates:     make(map[string]*accountHealthRuntime),
-		tokCache:         make(map[string]tokenCacheEntry),
-		warmupAttempt:    make(map[string]time.Time),
-		childLoopbackKey: "agy-child-" + randomHex(24),
-		routing:          (AccountPoolConfig{}).Normalized(),
-		workers:          make(map[string]*accountWorkerProc),
 		idleHibernated:   make(map[string]hibernatedWorkerSnapshot),
 		crashStates:      make(map[string]workerCrashState),
 		opLocks:          make(map[string]*sync.Mutex),
@@ -435,6 +399,7 @@ func NewAccountManager() *AccountManager {
 		healthStates:     make(map[string]*accountHealthRuntime),
 		tokCache:         make(map[string]tokenCacheEntry),
 		warmupAttempt:    make(map[string]time.Time),
+		childLoopbackKey: "agy-child-" + randomHex(24),
 	}
 }
 
