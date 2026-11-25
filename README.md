@@ -28,6 +28,12 @@
 
 ---
 
+> **Enhanced Fork (Pegasus02)**: Independently maintained on top of upstream [yuhxuiao/agy-acp-gateway](https://github.com/yuhxuiao/agy-acp-gateway) `v2.3.10`, adding (all `-race` tested, zero-CGO):
+> - **Split Admin Auth & Client API Keys**: Dedicated `:18891` dashboard password (`AGY_DASHBOARD_PASSWORD` / `sha256:`) and dashboard-issued `:18890`-only `agy-ck-*` client keys with scope & model allowlists and strict bidirectional `401` isolation (backward-compatible when unset).
+> - **Native macOS OAuth**: Zero-CGO `/dev/ptmx` PTY web OAuth, `SSH_CONNECTION` Keychain isolation, and concise failure diagnostics.
+> - **Hot-Path & Ops Optimizations**: SQLite/WAL `pread` + B-Tree pruning, streaming route-hint scanning, idle sub-gateway hibernation + exponential backoff probing, typed ACP/SSE hot paths, windowed cleanroom + LRU cache, `/usage` concurrency throttling, authenticated `ETag` `304`, zero-downtime `agy` hot-swap, and smart local proxy probing in `gw.sh`.
+
+
 **`agy-acp-gateway`** turns Google's official Antigravity CLI (`agy acp`, JSON-RPC 2.0 over stdio) into a production-hardened, single-binary multi-protocol gateway (`CGO_ENABLED=0`) and real-time control console.
 
 Unlike reverse-engineered proxies that forge private OAuth/Protobuf HTTP calls and expose accounts to TLS/header fingerprint bans, **100% of upstream traffic runs through the official `agy` binary**. Google's own binary handles TLS BoringSSL handshakes, OAuth token refreshes, trajectory checkpoints, and upstream framing — while `agy-acp-gateway` provides:

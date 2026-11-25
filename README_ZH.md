@@ -28,6 +28,12 @@
 
 ---
 
+> **增强维护版（Pegasus02 Fork）**：本仓库基于上游 [yuhxuiao/agy-acp-gateway](https://github.com/yuhxuiao/agy-acp-gateway) `v2.3.10` 独立维护，额外合入并通过全量 `-race` 测试的增强包括：
+> - **鉴权解耦与客户端 API Key**：`:18891` 支持独立管理员密码（`AGY_DASHBOARD_PASSWORD` / `sha256:`），控制台可签发/吊销仅限 `:18890` 数据面的 `agy-ck-*` 客户端密钥（支持作用域与模型白名单、双向 `401` 隔离，未配置管理员密码时自动兼容老 `AGY_API_KEYS`）。
+> - **macOS 原生 OAuth 体验**：零 CGO `/dev/ptmx` 原生 PTY 网页 OAuth、`SSH_CONNECTION` 隔离宿主机 Keychain、保留真实报错摘要。
+> - **热路径性能与运维优化**：SQLite/WAL `pread` 按需页读与 B-Tree 剪枝、流式路由扫描、子账号网关空闲休眠与指数退避唤醒、定型 ACP/SSE 优化、净室分窗快筛与 LRU 缓存、`/usage` 并发限流、鉴权后 `ETag` `304`、`agy` 零停机热升级与 `gw.sh` 本地代理探活。
+
+
 **`agy-acp-gateway`** 将 Google 官方 Antigravity CLI（`agy acp`，基于 stdio 的 JSON-RPC 2.0 协议）封装为生产级纯 Go（`CGO_ENABLED=0`）单二进制多协议 AI 网关与实时观测控制中心。
 
 不同于逆向抓包伪造私有 OAuth / Protobuf HTTP 请求的第三方中转方案，**本项目 `100%` 的上游通信均运行在官方 `agy` 二进制内部**。TLS BoringSSL 握手特征、OAuth 令牌自动续期、轨迹检查点与上游封包全部由 Google 官方客户端原生托管；`agy-acp-gateway` 在此安全基座之上提供：
