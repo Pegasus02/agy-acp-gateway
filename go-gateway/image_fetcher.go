@@ -655,10 +655,80 @@ func resolveAndBuildPromptBlocks(ctx context.Context, fetcher *RemoteImageFetche
 		return nil, err
 	}
 
-	var nonEmpty []struct {
-		Role string
-		Text string
+	joined := formatDeltaPromptText(unseenMessages, curStart, notesByMsg, maxChars)
+	var out []map[string]any
+	out = append(out, histImgs...)
+	out = append(out, curImgs...)
+	out = append(out, map[string]any{"type": "text", "text": joined})
+	return out, nil
+}
+
+const (
+	// Non-rollover delta prompts (resumed_delta / sticky_delta) are sent as a single text block.
+	// Oversized earlier tool_result blocks (e.g., 120KB+ minified JS grep output) can cause upstream
+	// single-block tail truncation that silently drops the latest user message at the end.
+	deltaHistSingleMsgMaxBytes  = 12 * 1024
+	deltaHistSingleMsgHeadBytes = 6 * 1024
+	deltaHistSingleMsgTailBytes = 4 * 1024
+	deltaMaxTotalBytes          = 48 * 1024
+)
+
+func foldMiddleUTF8(s string, maxBytes, headBytes, tailBytes int, label string) string {
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s
 	}
+	if headBytes < 0 {
+		headBytes = 0
+	}
+	if tailBytes < 0 {
+		tailBytes = 0
+	}
+	if headBytes+tailBytes >= maxBytes {
+		headBytes = maxBytes * 6 / 10
+		tailBytes = maxBytes - headBytes - 96
+		if tailBytes < 0 {
+			tailBytes = 0
+		}
+	}
+	headEnd := headBytes
+	if headEnd > len(s) {
+		headEnd = len(s)
+	}
+	for headEnd > 0 && headEnd < len(s) && !utf8.RuneStart(s[headEnd]) {
+		headEnd--
+	}
+	tailStart := len(s) - tailBytes
+	if tailStart < headEnd {
+		tailStart = headEnd
+	}
+	for tailStart < len(s) && !utf8.RuneStart(s[tailStart]) {
+		tailStart++
+	}
+	omitted := tailStart - headEnd
+	if omitted <= 0 {
+		return s
+	}
+	marker := fmt.Sprintf("\n\n[... %d bytes of %s omitted ...]\n\n", omitted, label)
+	if len(marker) >= omitted {
+		return s
+	}
+	return s[:headEnd] + marker + s[tailStart:]
+}
+
+func formatDeltaPromptText(unseenMessages []map[string]any, curStart int, notesByMsg map[int][]string, maxChars int) string {
+	type deltaItem struct {
+		Role      string
+		Text      string
+		Protected bool
+	}
+	protectedStart := curStart
+	if protectedStart == 0 && len(unseenMessages) > 1 {
+		// When unseenMessages has no assistant boundary (e.g., consecutive user/tool_result entries),
+		// still protect the final message so earlier huge tool_results cannot evict the latest prompt.
+		protectedStart = len(unseenMessages) - 1
+	}
+
+	var items []deltaItem
 	for i, m := range unseenMessages {
 		role, _ := m["role"].(string)
 		var t string
@@ -668,29 +738,118 @@ func resolveAndBuildPromptBlocks(ctx context.Context, fetcher *RemoteImageFetche
 			t = trimBlankOuterLines(formatSingleMessageText(m))
 		}
 		if t != "" {
-			nonEmpty = append(nonEmpty, struct {
-				Role string
-				Text string
-			}{Role: role, Text: t})
+			items = append(items, deltaItem{
+				Role:      role,
+				Text:      t,
+				Protected: i >= protectedStart,
+			})
 		}
 	}
-	var texts []string
-	for _, item := range nonEmpty {
-		if len(nonEmpty) > 1 {
-			texts = append(texts, fmt.Sprintf("[%s]\n%s", strings.ToUpper(item.Role), item.Text))
+	if len(items) == 0 {
+		return "Continue."
+	}
+
+	budget := deltaMaxTotalBytes
+	if maxChars > 0 && maxChars < budget {
+		budget = maxChars
+	}
+
+	// Step 1: Fold oversized non-tail historical messages (e.g., old 100KB+ tool_result blobs)
+	// before assembling the delta so a single noisy output cannot consume the entire budget.
+	hasHist := false
+	for i := range items {
+		if !items[i].Protected {
+			hasHist = true
+			if len(items[i].Text) > deltaHistSingleMsgMaxBytes {
+				items[i].Text = foldMiddleUTF8(
+					items[i].Text,
+					deltaHistSingleMsgMaxBytes,
+					deltaHistSingleMsgHeadBytes,
+					deltaHistSingleMsgTailBytes,
+					"earlier delta message/tool output",
+				)
+			}
+		}
+	}
+
+	renderItem := func(it deltaItem) string {
+		if len(items) > 1 {
+			return fmt.Sprintf("[%s]\n%s", strings.ToUpper(it.Role), it.Text)
+		}
+		return it.Text
+	}
+
+	rendered := make([]string, len(items))
+	totalLen := 0
+	for i, it := range items {
+		rendered[i] = renderItem(it)
+		if i > 0 {
+			totalLen += 2
+		}
+		totalLen += len(rendered[i])
+	}
+
+	// Fast path: short/normal deltas (including sticky_delta) remain byte-for-byte identical.
+	if !hasHist || totalLen <= budget {
+		return strings.Join(rendered, "\n\n")
+	}
+
+	// Step 2: Overall delta still exceeds budget -> unconditionally preserve protected tail
+	// (the latest user message / current turn) and keep newest-to-oldest earlier history within budget.
+	var histRendered, protRendered []string
+	for i, it := range items {
+		if it.Protected {
+			protRendered = append(protRendered, rendered[i])
 		} else {
-			texts = append(texts, item.Text)
+			histRendered = append(histRendered, rendered[i])
 		}
 	}
-	joined := strings.Join(texts, "\n\n")
-	if joined == "" {
-		joined = "Continue."
+	protText := strings.Join(protRendered, "\n\n")
+	const markerReserve = 128
+	histBudget := budget - len(protText) - markerReserve
+
+	var keptHistRev []string
+	usedHist := 0
+	droppedCount := 0
+	droppedBytes := 0
+	for i := len(histRendered) - 1; i >= 0; i-- {
+		entry := histRendered[i]
+		sep := 0
+		if len(keptHistRev) > 0 {
+			sep = 2
+		}
+		if histBudget > 0 && usedHist+sep+len(entry) <= histBudget {
+			keptHistRev = append(keptHistRev, entry)
+			usedHist += sep + len(entry)
+			continue
+		}
+		if len(keptHistRev) == 0 && histBudget >= 512 {
+			folded := foldMiddleUTF8(entry, histBudget, histBudget*5/10, histBudget*3/10, "earlier delta history")
+			if len(folded) <= histBudget {
+				keptHistRev = append(keptHistRev, folded)
+				usedHist += len(folded)
+				continue
+			}
+		}
+		droppedCount++
+		droppedBytes += len(entry)
 	}
-	var out []map[string]any
-	out = append(out, histImgs...)
-	out = append(out, curImgs...)
-	out = append(out, map[string]any{"type": "text", "text": joined})
-	return out, nil
+
+	var parts []string
+	if droppedCount > 0 {
+		parts = append(parts, fmt.Sprintf("[... %d earlier delta messages (%d bytes) omitted to preserve latest user turn ...]", droppedCount, droppedBytes))
+	}
+	for i := len(keptHistRev) - 1; i >= 0; i-- {
+		parts = append(parts, keptHistRev[i])
+	}
+	if protText != "" {
+		parts = append(parts, protText)
+	}
+	joined := strings.Join(parts, "\n\n")
+	if joined == "" {
+		return "Continue."
+	}
+	return joined
 }
 
 func trimBlankOuterLines(s string) string {
