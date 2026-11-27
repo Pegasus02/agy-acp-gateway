@@ -47,6 +47,7 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Setenv("AGY_ACP_BIN", fakeAcpBin)
+	os.Setenv("AGY_QUOTA_BIN", fakeAcpBin)
 	os.Setenv("AGY_PURE_API_HOME", filepath.Join(tmpDir, "pure-api-home"))
 	os.Setenv("AGY_GW_LOG", filepath.Join(tmpDir, "gateway.log"))
 	os.Setenv("AGY_STATE_DB", filepath.Join(tmpDir, "gateway.db"))

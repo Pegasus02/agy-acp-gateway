@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,7 @@ func TestV2325_EffectivePoolMemoryBudgetHonorsGlobalCap(t *testing.T) {
 	if estMB != wantEst {
 		t.Fatalf("expected governed estPeakRssMB=%d, got %d", wantEst, estMB)
 	}
-	if limitMB <= 0 {
+	if runtime.GOOS == "linux" && limitMB <= 0 {
 		t.Fatalf("expected positive hostMemLimitMB on Linux, got %d", limitMB)
 	}
 	// When globalCap == 0 (unbounded), estPeak falls back to sum of enabled slots.

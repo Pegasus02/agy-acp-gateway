@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -290,7 +291,7 @@ func TestV2319_CgroupMemoryLimitParsingAndPoolBudget(t *testing.T) {
 	if totalW != 12 || estMB != 12*260 {
 		t.Fatalf("expected totalMaxLiveWorkers=12 estPeakRssMB=%d, got total=%d est=%d", 12*260, totalW, estMB)
 	}
-	if limitMB <= 0 {
+	if runtime.GOOS == "linux" && limitMB <= 0 {
 		t.Fatalf("expected positive detected hostMemLimitMB on Linux, got %d", limitMB)
 	}
 }
