@@ -140,23 +140,31 @@ docker exec -e HOST_GW_PORT="$GW_PORT" -e HOST_DASH_PORT="$DASH_PORT" agy-acp-ga
   if [ -z "$key" ] && [ -n "${AGY_API_KEYS_FILE:-}" ] && [ -r "$AGY_API_KEYS_FILE" ]; then
     key=$(sed "s/^[[:space:]]*//;s/[[:space:]]*$//" "$AGY_API_KEYS_FILE" | grep -v "^$" | grep -v "^#" | head -n 1 || true)
   fi
+  dash_key=""
+  if [ -n "${AGY_DASHBOARD_PASSWORD:-}" ]; then
+    dash_key="$AGY_DASHBOARD_PASSWORD"
+  elif [ -n "${AGY_DASHBOARD_PASSWORD_FILE:-}" ] && [ -r "$AGY_DASHBOARD_PASSWORD_FILE" ]; then
+    dash_key=$(sed "s/^[[:space:]]*//;s/[[:space:]]*$//" "$AGY_DASHBOARD_PASSWORD_FILE" | grep -v "^$" | grep -v "^#" | head -n 1 || true)
+  else
+    dash_key="$key"
+  fi
   gw_port=${AGY_GW_PORT:-${GW_PORT:-$HOST_GW_PORT}}
   dash_port=${AGY_DASH_PORT:-${DASH_PORT:-$HOST_DASH_PORT}}
   api_get() {
-    hdr=$1; url=$2; tmo=$3
-    if [ -n "$key" ]; then
-      curl -fsS --max-time "$tmo" "$url" -H "$hdr: $key"
+    hdr=$1; url=$2; tmo=$3; cred=$4
+    if [ -n "$cred" ]; then
+      curl -fsS --max-time "$tmo" "$url" -H "$hdr: $cred"
     else
       curl -fsS --max-time "$tmo" "$url"
     fi
   }
-  api_get "x-api-key" "http://127.0.0.1:${gw_port}/v1/models" 10 | grep -q "\"gemini-"
-  api_get "x-goog-api-key" "http://127.0.0.1:${gw_port}/v1beta/models" 10 | grep -q "\"models/gemini-"
-  api_get "x-api-key" "http://127.0.0.1:${dash_port}/api/dashboard" 30 | grep -q "\"geminiPool\""
-  if [ -n "$key" ]; then
-    api_get "x-api-key" "http://127.0.0.1:${dash_port}/api/upgrade" 10 | grep -q "\"enabled\":true"
+  api_get "x-api-key" "http://127.0.0.1:${gw_port}/v1/models" 10 "$key" | grep -q "\"gemini-"
+  api_get "x-goog-api-key" "http://127.0.0.1:${gw_port}/v1beta/models" 10 "$key" | grep -q "\"models/gemini-"
+  api_get "x-api-key" "http://127.0.0.1:${dash_port}/api/dashboard" 30 "$dash_key" | grep -q "\"geminiPool\""
+  if [ -n "$dash_key" ]; then
+    api_get "x-api-key" "http://127.0.0.1:${dash_port}/api/upgrade" 10 "$dash_key" | grep -q "\"enabled\":true"
   else
-    api_get "x-api-key" "http://127.0.0.1:${dash_port}/api/upgrade" 10 | grep -q "\"enabled\":"
+    api_get "x-api-key" "http://127.0.0.1:${dash_port}/api/upgrade" 10 "" | grep -q "\"enabled\":"
   fi
 '
 

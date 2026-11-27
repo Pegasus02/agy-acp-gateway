@@ -70,6 +70,7 @@ func main() {
 			"defaultModel":         DefaultModelID,
 			"models":               modelIDs,
 			"authEnabled":          authEnabled(),
+			"dashboardAuth":        dashboardAuthMode(),
 			"maxLiveWorkers":       effectiveMaxLiveWorkers(),
 			"maxConcurrentPrompts": effectiveMaxConcurrentPrompts(),
 			"pureApiHome":          PureApiHome,
