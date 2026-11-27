@@ -607,6 +607,7 @@ func initConfig() {
 	AcpRecordDir = s.AcpRecordDir
 	syncModelRegistryConfig(s)
 	apiKeys = loadAPIKeys()
+	dashboardCreds = loadDashboardCredentials()
 	GlobalStore.Init(GatewayStateDB)
 }
 

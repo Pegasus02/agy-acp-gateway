@@ -733,7 +733,7 @@ func foldMiddleUTF8(s string, maxBytes, headBytes, tailBytes int, label string) 
 	return s[:headEnd] + marker + s[tailStart:]
 }
 
-func formatDeltaPromptText(unseenMessages []map[string]any, curStart int, notesByMsg map[int][]string, hibMeta map[string]hibernatedCallInfo, maxChars int) string {
+func formatDeltaPromptText(unseenMessages []map[string]any, curStart int, notesByMsg map[int][]string, hibMeta map[string]HibernatedCallMeta, maxChars int) string {
 	type deltaItem struct {
 		Role      string
 		Text      string
