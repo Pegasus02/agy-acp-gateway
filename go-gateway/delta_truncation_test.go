@@ -161,3 +161,52 @@ func TestDeltaPrompt_ShortStickyDeltaByteIdentical(t *testing.T) {
 		t.Fatalf("short multi delta altered:\n got: %q\nwant: %q", got, want)
 	}
 }
+
+func TestRolloverPrompt_HugeHistoryCappedUnderAgy192KCeilingPreservingRecentUserAndCurrentTurn(t *testing.T) {
+	// Reproduce production PARKED_IMAGE_ROLLOVER / compaction_rollover with ~360KB history:
+	// early scientific discussion + recent user instruction ("我说用方案A做ppt") + current tool_result.
+	var all []map[string]any
+	all = append(all, map[string]any{"role": "user", "content": "OPENING_CONTEXT: 结合文献调研，讨论这两条路径的可行性"})
+	for i := 0; i < 60; i++ {
+		all = append(all,
+			map[string]any{"role": "user", "content": fmt.Sprintf("旧文献段落 #%02d: %s", i, strings.Repeat("Fe(CO)5 intercalation Bi2Se3 superlattice ", 80))},
+			map[string]any{"role": "assistant", "content": fmt.Sprintf("旧分析 #%02d: %s", i, strings.Repeat("扩散距离与热力学分析结果 ", 80))},
+		)
+	}
+	all = append(all,
+		map[string]any{"role": "user", "content": "我说用方案A做ppt"},
+		map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "acp_slide_14", "name": "univer_execute", "input": map[string]any{"page": 14}}}},
+		map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "acp_slide_14", "content": "Screenshot page 14: [\"/private/tmp/v8_p14_check/page-14.png\"]"}}},
+	)
+
+	blocks, err := resolveAndBuildPromptBlocks(context.Background(), GlobalImageFetcher, all[len(all)-1:], true, all, MaxTranscriptChar, ModelOrDefault("gemini-4-neon"))
+	if err != nil {
+		t.Fatalf("resolveAndBuildPromptBlocks(rollover) failed: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks (resource + text), got %d", len(blocks))
+	}
+	resMap, _ := blocks[0]["resource"].(map[string]any)
+	histText, _ := resMap["text"].(string)
+	curText, _ := blocks[1]["text"].(string)
+
+	if !utf8.ValidString(histText) || !utf8.ValidString(curText) {
+		t.Fatal("rollover prompt blocks must remain valid UTF-8")
+	}
+	combinedLen := len(histText) + len(curText)
+	if combinedLen > rolloverMaxTotalBytes {
+		t.Fatalf("combined rollover text (%d bytes) exceeds safe cap (%d bytes) and risks agy 192KB tail truncation", combinedLen, rolloverMaxTotalBytes)
+	}
+	if !strings.Contains(histText, "OPENING_CONTEXT") {
+		t.Fatal("expected opening context preserved in rollover head")
+	}
+	if !strings.Contains(histText, "trimmed to stay within the model context window") {
+		t.Fatal("expected middle trim marker in oversized rollover history")
+	}
+	if !strings.Contains(histText, "我说用方案A做ppt") {
+		t.Fatal("expected recent user instruction ('我说用方案A做ppt') preserved in rollover tail")
+	}
+	if !strings.Contains(curText, "page-14.png") {
+		t.Fatal("expected current turn tool_result preserved intact in rollover text block")
+	}
+}

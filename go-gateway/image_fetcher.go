@@ -590,6 +590,21 @@ func resolveAndBuildPromptBlocks(ctx context.Context, fetcher *RemoteImageFetche
 			return nil, err
 		}
 
+		var curTexts []string
+		hibMeta := hibernatedCallMetaFromContext(ctx)
+		for _, m := range currentMsgs {
+			role, _ := m["role"].(string)
+			t := trimBlankOuterLines(formatSingleMessageTextWithHibernatedMeta(m, nil, hibMeta))
+			if t != "" {
+				if len(currentMsgs) > 1 && role != "" {
+					curTexts = append(curTexts, fmt.Sprintf("[%s]\n%s", strings.ToUpper(role), t))
+				} else {
+					curTexts = append(curTexts, t)
+				}
+			}
+		}
+		lastText := strings.Join(curTexts, "\n\n")
+
 		var historyLines []string
 		for i, m := range historyMsgs {
 			txt := trimBlankOuterLines(formatSingleMessageTextWithMediaNotes(m, notesByMsg[i]))
@@ -602,12 +617,24 @@ func resolveAndBuildPromptBlocks(ctx context.Context, fetcher *RemoteImageFetche
 			}
 		}
 		transcriptText := strings.Join(historyLines, "\n\n")
-		if len(transcriptText) > maxChars {
-			headChars := 220000
-			if headChars > maxChars*15/100 {
-				headChars = maxChars * 15 / 100
+		histBudget := maxChars
+		safeCap := rolloverMaxTotalBytes - len(lastText) - rolloverFramingReserve
+		if safeCap < rolloverMinHistoryBudget {
+			safeCap = rolloverMinHistoryBudget
+		}
+		if histBudget > safeCap {
+			histBudget = safeCap
+		}
+		if len(transcriptText) > histBudget {
+			headChars := histBudget * 15 / 100
+			if headChars > 24*1024 {
+				headChars = 24 * 1024
 			}
-			tailChars := maxChars - headChars
+			const trimMarkerReserve = 128
+			tailChars := histBudget - headChars - trimMarkerReserve
+			if tailChars < 0 {
+				tailChars = histBudget - headChars
+			}
 			headEnd := headChars
 			if headEnd > len(transcriptText) {
 				headEnd = len(transcriptText)
@@ -627,21 +654,6 @@ func resolveAndBuildPromptBlocks(ctx context.Context, fetcher *RemoteImageFetche
 				fmt.Sprintf("\n\n[... %d chars of intermediate tool outputs trimmed to stay within the model context window ...]\n\n", trimmed) +
 				transcriptText[tailStart:]
 		}
-
-		var curTexts []string
-		hibMeta := hibernatedCallMetaFromContext(ctx)
-		for _, m := range currentMsgs {
-			role, _ := m["role"].(string)
-			t := trimBlankOuterLines(formatSingleMessageTextWithHibernatedMeta(m, nil, hibMeta))
-			if t != "" {
-				if len(currentMsgs) > 1 && role != "" {
-					curTexts = append(curTexts, fmt.Sprintf("[%s]\n%s", strings.ToUpper(role), t))
-				} else {
-					curTexts = append(curTexts, t)
-				}
-			}
-		}
-		lastText := strings.Join(curTexts, "\n\n")
 
 		var out []map[string]any
 		out = append(out, map[string]any{
@@ -682,6 +694,14 @@ func resolveAndBuildPromptBlocks(ctx context.Context, fetcher *RemoteImageFetche
 }
 
 const (
+	// Official agy CLI hard-truncates the combined <USER_REQUEST> text (resource + text blocks)
+	// at ~192 KB (~191,986 bytes) with "<truncated N bytes>", which silently drops the tail
+	// (recent user instructions + "[Conversation History Restored ...]" + latest tool results).
+	// Cap total rollover prompt text safely below 192 KB so agy never tail-truncates the latest turn.
+	rolloverMaxTotalBytes    = 160 * 1024
+	rolloverFramingReserve   = 2048
+	rolloverMinHistoryBudget = 16 * 1024
+
 	// Non-rollover delta prompts (resumed_delta / sticky_delta) are sent as a single text block.
 	// Oversized earlier tool_result blocks (e.g., 120KB+ minified JS grep output) can cause upstream
 	// single-block tail truncation that silently drops the latest user message at the end.
